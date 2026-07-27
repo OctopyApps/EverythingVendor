@@ -1,0 +1,7 @@
+.env
+keys/
+*.pem
+platform-core
+/tmp/
+.DS_Store
+.idea
