@@ -4,3 +4,5 @@ keys/
 platform-core
 /tmp/
 .DS_Store
+.idea/
+../.idea/
