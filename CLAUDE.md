@@ -89,10 +89,11 @@ make run
 - ✅ RBAC: `Authorizer` (default deny, explicit deny, кэш в Redis), схема БД.
 - ✅ Аудит: все проверки прав (allowed/denied) пишутся в `audit_log`.
 - ✅ Core API: список/получение пользователей, список ролей, назначение/отзыв ролей.
+- ✅ Тесты: чёрно-ящичные HTTP-тесты на auth, RBAC и core API (`ev-core/tests/`).
 - ⬜ Rate limiting на `/auth/login` и `/auth/register` (защита от brute-force) — **следующее в очереди**.
 - ⬜ Модуль CRM (Фаза 1) — не начат.
 - ⬜ NATS event bus — поднят инфраструктурно, код публикации/подписки не написан.
-- ⬜ Тесты — пока нет ни одного (ни unit, ни integration).
+- ⬜ Unit-тесты на `Authorizer.evaluate` (таблица истинности всех веток) — сейчас есть только integration-тесты через HTTP.
 
 ## Известные сознательные упрощения MVP
 

@@ -32,7 +32,17 @@ curl http://localhost:8080/health
 ```
 → `201 {"user_id": "<uuid>"}`
 
-Ошибки: `400 invalid_email` / `400 password_must_be_at_least_12_characters` (текст ошибки берётся из `err.Error()`) / `409 email_taken`.
+Ошибки:
+- `400 {"error": "invalid email format"}` — невалидный email
+- `400 {"error": "password must be at least 12 characters"}` — слишком короткий пароль
+- `409 {"error": "email_taken"}` — email уже занят
+
+Обрати внимание: для первых двух случаев код ошибки — это сырой текст
+из `err.Error()` (`authsvc.ErrInvalidEmail` / `authsvc.ErrWeakPassword`),
+а не стабильный машиночитаемый код вроде `email_taken`. Если фронтенд
+будет сопоставлять текст ошибки с UI-сообщением — сейчас для этого
+нужно матчить конкретную строку, а не enum-код. Это несоответствие
+зафиксировано как технический долг в `docs/roadmap.md`.
 
 Новый пользователь автоматически получает системную роль `member`
 **без прав** — доступ выдаётся отдельно через `POST /api/core/users/{id}/roles`.

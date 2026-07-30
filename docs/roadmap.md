@@ -13,6 +13,11 @@
 - [x] Core API: CRUD-эндпоинты для users/roles (список, получение, назначение/отзыв ролей)
 - [ ] Rate limiting на `/auth/login`, `/auth/register` — **следующий шаг**
 - [ ] Отзыв всех refresh-токенов пользователя разом (не только по одному)
+- [ ] **Тех.долг:** `POST /auth/register` при `400` отдаёт сырой текст ошибки
+      (`err.Error()` из `ErrInvalidEmail`/`ErrWeakPassword`) вместо стабильного
+      машиночитаемого кода, как у остальных ошибок (`email_taken`,
+      `access_denied` и т.д.) — см. `docs/api.md`. Стоит завести `ErrorCode`
+      у этих ошибок по аналогии с остальными, когда дойдут руки.
 - [ ] Управление правами роли через API (`POST /api/core/roles`,
       `POST /api/core/roles/{id}/permissions`) — сейчас только через SQL/миграции
 - [ ] Управление `resource_grants` через API
@@ -20,8 +25,11 @@
       подписка на события) — см. architecture.md §3.2.3 и §5
 - [ ] Обвязка publish/subscribe для NATS JetStream (Go + Python helper-библиотеки)
 - [ ] Каркас фронтенда (shell с аутентификацией, динамическое меню)
-- [ ] Unit-тесты на `Authorizer.evaluate` (таблица истинности всех веток решения)
-- [ ] Integration-тесты на auth-flow (register → login → refresh → logout)
+- [x] Integration-тесты на auth-flow и core API (чёрно-ящичные HTTP-тесты в `ev-core/tests/`:
+      register/login/refresh/logout, default deny, управление ролями)
+- [ ] Unit-тесты на `Authorizer.evaluate` напрямую (таблица истинности всех веток
+      решения) — сейчас логика проверяется только косвенно через HTTP,
+      без прямого покрытия всех комбинаций resource_grants/ролей
 
 *Критерий готовности фазы (из architecture.md):* можно зарегистрировать
 «пустой» тестовый модуль, увидеть его сущность в UI, выполнить CRUD с
