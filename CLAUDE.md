@@ -33,8 +33,9 @@ internal/rbac/          — Authorizer, PermissionCache, модели прав
 internal/audit/         — запись в audit_log
 internal/authsvc/       — регистрация/логин/refresh/logout
 internal/httpctx/       — claims в context.Context (общий для httpserver и coreapi)
-internal/coreapi/       — CRUD-эндпоинты ядра: users, roles, назначение ролей
-internal/httpserver/    — роутинг (net/http ServeMux), middleware (auth + RBAC), security headers
+internal/coreapi/       — CRUD-эндпоинты ядра: users, roles, назначение ролей, revoke-sessions
+internal/ratelimit/     — Redis fixed-window rate limiter (для /auth/login и /auth/register)
+internal/httpserver/    — роутинг (net/http ServeMux), middleware (auth + RBAC + rate limit), security headers
 migrations/             — SQL-миграции (golang-migrate)
 keys/                   — RSA-ключи JWT (генерируются локально, в git не попадают)
 docs/                   — вся остальная документация
@@ -80,6 +81,10 @@ make run
    пользователя (`Authorizer.InvalidateUserCache`) — не полагаться только на TTL.
 9. **Комментарии в коде — на русском**, идентификаторы — на английском
    (сложившийся стиль проекта, сохранять для консистентности).
+10. **Rate limiting — отдельный случай fail-поведения**: в отличие от RBAC (п. 3),
+    `internal/ratelimit.Limiter` поведение при недоступности Redis конфигурируется
+    (`RATE_LIMIT_FAIL_MODE`, по умолчанию open) — это осознанно, не путать с п. 3
+    при рефакторинге. См. `docs/security.md`.
 
 ## Текущий статус / что уже готово
 
@@ -90,7 +95,8 @@ make run
 - ✅ Аудит: все проверки прав (allowed/denied) пишутся в `audit_log`.
 - ✅ Core API: список/получение пользователей, список ролей, назначение/отзыв ролей.
 - ✅ Тесты: чёрно-ящичные HTTP-тесты на auth, RBAC и core API (`ev-core/tests/`).
-- ⬜ Rate limiting на `/auth/login` и `/auth/register` (защита от brute-force) — **следующее в очереди**.
+- ✅ Rate limiting на `/auth/login` (IP + аккаунт) и `/auth/register` (IP), fail-mode конфигурируем.
+- ✅ Отзыв всех refresh-токенов разом (самообслуживание + админский эндпоинт).
 - ⬜ Модуль CRM (Фаза 1) — не начат.
 - ⬜ NATS event bus — поднят инфраструктурно, код публикации/подписки не написан.
 - ⬜ Unit-тесты на `Authorizer.evaluate` (таблица истинности всех веток) — сейчас есть только integration-тесты через HTTP.

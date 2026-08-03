@@ -33,16 +33,11 @@ curl http://localhost:8080/health
 → `201 {"user_id": "<uuid>"}`
 
 Ошибки:
-- `400 {"error": "invalid email format"}` — невалидный email
-- `400 {"error": "password must be at least 12 characters"}` — слишком короткий пароль
+- `400 {"error": "invalid_email"}` — невалидный email
+- `400 {"error": "weak_password"}` — слишком короткий пароль (минимум 12 символов)
 - `409 {"error": "email_taken"}` — email уже занят
-
-Обрати внимание: для первых двух случаев код ошибки — это сырой текст
-из `err.Error()` (`authsvc.ErrInvalidEmail` / `authsvc.ErrWeakPassword`),
-а не стабильный машиночитаемый код вроде `email_taken`. Если фронтенд
-будет сопоставлять текст ошибки с UI-сообщением — сейчас для этого
-нужно матчить конкретную строку, а не enum-код. Это несоответствие
-зафиксировано как технический долг в `docs/roadmap.md`.
+- `429 {"error": "rate_limit_exceeded"}` — превышен лимит регистраций с этого IP
+  (`REGISTER_RATE_LIMIT_PER_IP`, по умолчанию 20/час, см. `docs/security.md`)
 
 Новый пользователь автоматически получает системную роль `member`
 **без прав** — доступ выдаётся отдельно через `POST /api/core/users/{id}/roles`.
@@ -56,6 +51,11 @@ curl http://localhost:8080/health
 Ошибка при неверных данных: `401 {"error":"invalid_credentials"}` — намеренно
 не различает "нет такого email" и "неверный пароль" (защита от user enumeration).
 
+`429 {"error":"rate_limit_exceeded"}` — превышен один из двух лимитов (см. `docs/security.md`):
+- по IP (`LOGIN_RATE_LIMIT_PER_IP`, по умолчанию 10 за 5 минут);
+- по конкретному аккаунту (`LOGIN_RATE_LIMIT_PER_ACCOUNT`, по умолчанию 5 за 15 минут) —
+  считается даже для несуществующего email, чтобы не создавать канал user enumeration.
+
 ### `POST /auth/refresh`
 ```json
 {"refresh_token": "..."}
@@ -68,6 +68,15 @@ curl http://localhost:8080/health
 {"refresh_token": "..."}
 ```
 → `204 No Content`. Отзывает конкретный refresh-токен (логаут с одного устройства).
+
+### `POST /auth/logout-all`
+Требует `Authorization: Bearer <access_token>` (без отдельных прав через RBAC —
+отзыв своих же сессий не требует отдельного разрешения). Без тела запроса.
+→ `204 No Content`. Отзывает **все** refresh-токены текущего пользователя
+(самообслуживание, например после смены пароля).
+
+ВАЖНО: не отзывает уже выданный access-токен (JWT) — он продолжит
+действовать до истечения своего TTL (по умолчанию 15 минут).
 
 ---
 
@@ -115,6 +124,14 @@ curl "http://localhost:8080/api/core/users?limit=10&offset=0" \
 ### `GET /api/core/roles`
 Требует `core.role:read`.
 → `{"roles": [{"id": "...", "name": "...", "description": "...", "is_system": false}, ...]}`
+
+### `POST /api/core/users/{id}/revoke-sessions`
+Требует `core.user:write`. Админский принудительный логаут другого
+пользователя — отзывает все его refresh-токены. Без тела запроса.
+→ `204 No Content` или `404 user_not_found` (если `user_id` не принадлежит тенанту
+вызывающего — защита от IDOR).
+
+ВАЖНО: не отзывает уже выданный access-токен целевого пользователя.
 
 ---
 

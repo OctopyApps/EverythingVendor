@@ -11,13 +11,12 @@
 - [x] Модель RBAC: роли/права/точечные resource_grants, схема БД
 - [x] Authorizer: default deny, explicit deny, кэш в Redis, аудит каждой проверки
 - [x] Core API: CRUD-эндпоинты для users/roles (список, получение, назначение/отзыв ролей)
-- [ ] Rate limiting на `/auth/login`, `/auth/register` — **следующий шаг**
-- [ ] Отзыв всех refresh-токенов пользователя разом (не только по одному)
-- [ ] **Тех.долг:** `POST /auth/register` при `400` отдаёт сырой текст ошибки
-      (`err.Error()` из `ErrInvalidEmail`/`ErrWeakPassword`) вместо стабильного
-      машиночитаемого кода, как у остальных ошибок (`email_taken`,
-      `access_denied` и т.д.) — см. `docs/api.md`. Стоит завести `ErrorCode`
-      у этих ошибок по аналогии с остальными, когда дойдут руки.
+- [x] Rate limiting на `/auth/login` (по IP + по аккаунту) и `/auth/register` (по IP),
+      с конфигурируемым fail-mode при недоступности Redis — см. `docs/security.md`
+- [x] Отзыв всех refresh-токенов пользователя разом (`POST /auth/logout-all` самообслуживание,
+      `POST /api/core/users/{id}/revoke-sessions` админский)
+- [x] **Тех.долг закрыт**: `POST /auth/register` теперь отдаёт стабильные машиночитаемые
+      коды (`invalid_email`, `weak_password`) вместо сырого текста ошибки
 - [ ] Управление правами роли через API (`POST /api/core/roles`,
       `POST /api/core/roles/{id}/permissions`) — сейчас только через SQL/миграции
 - [ ] Управление `resource_grants` через API
@@ -25,6 +24,11 @@
       подписка на события) — см. architecture.md §3.2.3 и §5
 - [ ] Обвязка publish/subscribe для NATS JetStream (Go + Python helper-библиотеки)
 - [ ] Каркас фронтенда (shell с аутентификацией, динамическое меню)
+- [ ] **UI для управления ролевыми политиками** — экран админа над core API:
+      список пользователей/ролей, назначение/отзыв ролей, в будущем —
+      управление правами ролей и resource_grants, когда появятся соответствующие
+      API-эндпоинты. Логично делать после каркаса фронтенда, первым экраном
+      после аутентификации.
 - [x] Integration-тесты на auth-flow и core API (чёрно-ящичные HTTP-тесты в `ev-core/tests/`:
       register/login/refresh/logout, default deny, управление ролями)
 - [ ] Unit-тесты на `Authorizer.evaluate` напрямую (таблица истинности всех веток
