@@ -160,3 +160,34 @@ func (a *Authorizer) getRolePermissions(ctx context.Context, tenantID, userID uu
 func (a *Authorizer) InvalidateUserCache(ctx context.Context, tenantID, userID uuid.UUID) error {
 	return a.cache.Invalidate(ctx, tenantID, userID)
 }
+
+// InvalidateRoleCache инвалидирует RBAC-кэш всех пользователей, у которых
+// назначена данная роль. Обязателен к вызову после любого изменения
+// набора прав самой роли (назначение/отзыв permission) — в отличие от
+// InvalidateUserCache, здесь затрагивается потенциально много пользователей
+// одним вызовом, не один.
+func (a *Authorizer) InvalidateRoleCache(ctx context.Context, tenantID, roleID uuid.UUID) error {
+	rows, err := a.pool.Query(ctx, `SELECT user_id FROM user_roles WHERE role_id = $1`, roleID)
+	if err != nil {
+		return fmt.Errorf("list users with role: %w", err)
+	}
+	defer rows.Close()
+
+	var firstErr error
+	for rows.Next() {
+		var userID uuid.UUID
+		if err := rows.Scan(&userID); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if err := a.cache.Invalidate(ctx, tenantID, userID); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if err := rows.Err(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
+}

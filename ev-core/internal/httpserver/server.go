@@ -83,6 +83,46 @@ func NewServer(
 		authenticated(RequirePermission(authorizer, "core", "role", "read", NoRecordID)(
 			http.HandlerFunc(coreHandlers.ListRoles))))
 
+	mux.Handle("POST /api/core/roles",
+		authenticated(RequirePermission(authorizer, "core", "role", "write", NoRecordID)(
+			http.HandlerFunc(coreHandlers.CreateRole))))
+
+	mux.Handle("DELETE /api/core/roles/{id}",
+		authenticated(RequirePermission(authorizer, "core", "role", "write", PathUUIDExtractor("id"))(
+			http.HandlerFunc(coreHandlers.DeleteRole))))
+
+	mux.Handle("GET /api/core/roles/{id}/permissions",
+		authenticated(RequirePermission(authorizer, "core", "role", "read", PathUUIDExtractor("id"))(
+			http.HandlerFunc(coreHandlers.ListRolePermissions))))
+
+	mux.Handle("POST /api/core/roles/{id}/permissions",
+		authenticated(RequirePermission(authorizer, "core", "role", "write", PathUUIDExtractor("id"))(
+			http.HandlerFunc(coreHandlers.AssignPermissionToRole))))
+
+	mux.Handle("DELETE /api/core/roles/{id}/permissions/{permission_id}",
+		authenticated(RequirePermission(authorizer, "core", "role", "write", PathUUIDExtractor("id"))(
+			http.HandlerFunc(coreHandlers.RevokePermissionFromRole))))
+
+	// Каталог всех возможных прав платформы — своё отдельное право core.permission:read,
+	// чтобы не перегружать семантикой core.role:read (миграция 0003).
+	mux.Handle("GET /api/core/permissions",
+		authenticated(RequirePermission(authorizer, "core", "permission", "read", NoRecordID)(
+			http.HandlerFunc(coreHandlers.ListPermissions))))
+
+	// Управление точечными resource_grants — своё право core.resource_grant:*
+	// (миграция 0003), т.к. это мета-уровень контроля над любым модулем/сущностью.
+	mux.Handle("GET /api/core/resource-grants",
+		authenticated(RequirePermission(authorizer, "core", "resource_grant", "read", NoRecordID)(
+			http.HandlerFunc(coreHandlers.ListResourceGrants))))
+
+	mux.Handle("POST /api/core/resource-grants",
+		authenticated(RequirePermission(authorizer, "core", "resource_grant", "write", NoRecordID)(
+			http.HandlerFunc(coreHandlers.CreateResourceGrant))))
+
+	mux.Handle("DELETE /api/core/resource-grants/{id}",
+		authenticated(RequirePermission(authorizer, "core", "resource_grant", "write", PathUUIDExtractor("id"))(
+			http.HandlerFunc(coreHandlers.DeleteResourceGrant))))
+
 	// Админский принудительный логаут другого пользователя — то же право, что
 	// и управление его ролями (core.user:write).
 	mux.Handle("POST /api/core/users/{id}/revoke-sessions",
