@@ -190,6 +190,33 @@ func (h *Handlers) RevokeRole(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RevokeSessions — админский принудительный логаут другого пользователя
+// (отзывает все его refresh-токены). Требует core.user:write — то же право,
+// что и управление ролями пользователя.
+//
+// ВАЖНО: не отзывает уже выданный access-токен (JWT) целевого пользователя —
+// он продолжит действовать до истечения своего TTL (см. docs/security.md).
+func (h *Handlers) RevokeSessions(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpctx.ClaimsFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_claims"})
+		return
+	}
+
+	userID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_user_id"})
+		return
+	}
+
+	if err := h.repo.RevokeAllSessions(r.Context(), claims.TenantID, userID); err != nil {
+		writeRepoError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func parseIntParam(r *http.Request, name string, def, min, max int) int {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {

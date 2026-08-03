@@ -31,6 +31,28 @@ go test ./tests/...
 тесты, которым нужен прямой SQL-доступ (`makeAdmin` в `db.go`), остальные
 проходят как обычно.
 
+## Rate limiting и повторные прогоны тестов
+
+Все тесты бьют в `/auth/register` с одного и того же IP (localhost) — они
+учитываются в общий лимит `REGISTER_RATE_LIMIT_PER_IP` (см. `docs/security.md`).
+При многократных подряд запусках подряд можно упереться в `429 rate_limit_exceeded` —
+это не поломка тестов, а лимитер работает как задуман.
+
+Счётчик живёт в Redis, поэтому простой рестарт сервера его НЕ сбрасывает. Чтобы
+разблокироваться после серии прогонов:
+
+```bash
+# очистить счётчики лимита напрямую
+ docker exec platform-core-redis-1 redis-cli --scan --pattern 'ratelimit:*' | xargs -r docker exec -i platform-core-redis-1 redis-cli DEL
+```
+
+Или временно поднять лимит перед запуском сервера:
+
+```bash
+export REGISTER_RATE_LIMIT_PER_IP=1000
+make run &
+```
+
 ## Что покрыто
 
 - `health_test.go` — `GET /health`.

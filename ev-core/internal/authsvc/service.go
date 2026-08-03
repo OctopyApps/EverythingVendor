@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"platform-core/internal/ratelimit"
 	"platform-core/internal/security"
 )
 
@@ -25,20 +27,46 @@ var (
 	ErrWeakPassword       = errors.New("password must be at least 12 characters")
 	ErrUserInactive       = errors.New("user account is inactive")
 	ErrTokenInvalid       = errors.New("refresh token is invalid or expired")
+	ErrTooManyAttempts    = errors.New("too many login attempts, please try again later")
 )
 
 const minPasswordLength = 12
 
 type Service struct {
-	pool   *pgxpool.Pool
-	tokens *security.TokenManager
+	pool    *pgxpool.Pool
+	tokens  *security.TokenManager
+	limiter *ratelimit.Limiter
 
 	accessTTL  time.Duration
 	refreshTTL time.Duration
+
+	// Лимит попыток логина на конкретный аккаунт (в дополнение к
+	// лимиту по IP на уровне middleware, см. httpserver.RateLimitByIP) — защита
+	// от credential stuffing с разных IP по одному аккаунту.
+	loginRateLimitPerAccount    int
+	loginRateLimitAccountWindow time.Duration
 }
 
-func NewService(pool *pgxpool.Pool, tokens *security.TokenManager, accessTTL, refreshTTL time.Duration) *Service {
-	return &Service{pool: pool, tokens: tokens, accessTTL: accessTTL, refreshTTL: refreshTTL}
+// ServiceConfig — настройки сервиса аутентификации. Вынесено в отдельный
+// тип, чтобы NewService не обрастал позиционными аргументами одного типа (time.Duration).
+type ServiceConfig struct {
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
+
+	LoginRateLimitPerAccount    int
+	LoginRateLimitAccountWindow time.Duration
+}
+
+func NewService(pool *pgxpool.Pool, tokens *security.TokenManager, limiter *ratelimit.Limiter, cfg ServiceConfig) *Service {
+	return &Service{
+		pool:                        pool,
+		tokens:                      tokens,
+		limiter:                     limiter,
+		accessTTL:                   cfg.AccessTokenTTL,
+		refreshTTL:                  cfg.RefreshTokenTTL,
+		loginRateLimitPerAccount:    cfg.LoginRateLimitPerAccount,
+		loginRateLimitAccountWindow: cfg.LoginRateLimitAccountWindow,
+	}
 }
 
 type AuthResult struct {
@@ -93,6 +121,16 @@ func (s *Service) Register(ctx context.Context, tenantID uuid.UUID, email, passw
 // пароль" — иначе даём атакующему возможность перебором узнавать
 // существующие email-адреса (user enumeration).
 func (s *Service) Login(ctx context.Context, tenantID uuid.UUID, email, password string) (*AuthResult, error) {
+	// Лимит по аккаунту проверяем до похода в БД и независимо от того, существует
+	// ли такой email — иначе различие в поведении лимитера само стало бы каналом
+	// user enumeration.
+	if s.limiter != nil {
+		result := s.limiter.Allow(ctx, "login:account:"+accountRateLimitKey(email), s.loginRateLimitPerAccount, s.loginRateLimitAccountWindow)
+		if !result.Allowed {
+			return nil, ErrTooManyAttempts
+		}
+	}
+
 	var userID uuid.UUID
 	var passwordHash string
 	var isActive bool
@@ -197,6 +235,25 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 	return err
 }
 
+// RevokeAllRefreshTokens отзывает все активные refresh-токены пользователя —
+// используется для принудительного «разлогинить со всех устройств» —
+// самостоятельно (после смены пароля/подозрения на компрометацию) или по
+// требованию админа (см. coreapi.Handlers.RevokeSessions).
+//
+// ВАЖНО: это НЕ отзывает уже выданные access-токены (JWT) — они
+// продолжат действовать до истечения своего TTL (ACCESS_TOKEN_TTL_MINUTES),
+// т.к. не хранятся и не проверяются по списку отзыва (см. docs/security.md).
+func (s *Service) RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE refresh_tokens SET revoked_at = now()
+		WHERE user_id = $1 AND revoked_at IS NULL
+	`, userID)
+	if err != nil {
+		return fmt.Errorf("revoke all refresh tokens: %w", err)
+	}
+	return nil
+}
+
 func generateRefreshToken() (token string, hash string, err error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -212,6 +269,16 @@ func generateRefreshToken() (token string, hash string, err error) {
 // а чтение БД, от которого достаточно быстрого криптографического хэша.
 func hashRefreshToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// accountRateLimitKey превращает email в ключ для rate limiterа. Email
+// приводится к нижнему регистру, чтобы нельзя было обойти лимит
+// регистрозависимой вариацией (Foo@example.com вместо foo@example.com), и хэшируется
+// (SHA-256) — чтобы в ключах Redis не оседали плейнтекстовые email всех, кто
+// пытался залогиниться (включая несуществующие аккаунты).
+func accountRateLimitKey(email string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(email)))
 	return hex.EncodeToString(sum[:])
 }
 

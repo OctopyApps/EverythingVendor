@@ -7,6 +7,8 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+
+	"platform-core/internal/httpctx"
 )
 
 // defaultTenantID — тенант для MVP. Когда появится multi-tenant onboarding,
@@ -110,6 +112,26 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// LogoutAll отзывает все refresh-токены текущего аутентифицированного пользователя
+// — самообслуживание, требует только валидный access-токен (без отдельных
+// прав через RBAC — отзыв своих же сессий не требует отдельного разрешения).
+// Подключается в httpserver через Authenticate middleware, как и остальные
+// защищённые эндпоинты.
+func (h *Handlers) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpctx.ClaimsFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing_claims"})
+		return
+	}
+
+	if err := h.svc.RevokeAllRefreshTokens(r.Context(), claims.UserID); err != nil {
+		slog.Error("logout-all failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	defer r.Body.Close()
 	// Ограничиваем размер тела запроса, чтобы избежать DoS через огромный payload.
@@ -139,10 +161,16 @@ func writeAuthError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_credentials"})
 	case errors.Is(err, ErrEmailTaken):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "email_taken"})
-	case errors.Is(err, ErrInvalidEmail), errors.Is(err, ErrWeakPassword):
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	case errors.Is(err, ErrInvalidEmail):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_email"})
+	case errors.Is(err, ErrWeakPassword):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "weak_password"})
 	case errors.Is(err, ErrTokenInvalid):
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_refresh_token"})
+	case errors.Is(err, ErrTooManyAttempts):
+		// Без Retry-After здесь: в отличие от httpserver.RateLimitByIP, Service.Login
+		// не возвращает оставшееся время окна наружу через ratelimit.Result.
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate_limit_exceeded"})
 	default:
 		slog.Error("auth handler internal error", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error"})

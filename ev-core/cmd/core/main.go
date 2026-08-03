@@ -17,6 +17,7 @@ import (
 	"platform-core/internal/config"
 	"platform-core/internal/db"
 	"platform-core/internal/httpserver"
+	"platform-core/internal/ratelimit"
 	"platform-core/internal/rbac"
 	"platform-core/internal/security"
 )
@@ -64,14 +65,32 @@ func run() error {
 	permCache := rbac.NewPermissionCache(redisClient, cfg.RBACCacheTTL)
 	authorizer := rbac.NewAuthorizer(pool, permCache, auditLogger)
 
-	authService := authsvc.NewService(pool, tokens, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	var rateLimitFailMode ratelimit.FailMode
+	if cfg.RateLimitFailMode == "closed" {
+		rateLimitFailMode = ratelimit.FailClosed
+	} else {
+		rateLimitFailMode = ratelimit.FailOpen
+	}
+	rateLimiter := ratelimit.NewLimiter(redisClient, rateLimitFailMode)
+
+	authService := authsvc.NewService(pool, tokens, rateLimiter, authsvc.ServiceConfig{
+		AccessTokenTTL:              cfg.AccessTokenTTL,
+		RefreshTokenTTL:             cfg.RefreshTokenTTL,
+		LoginRateLimitPerAccount:    cfg.LoginRateLimitPerAccount,
+		LoginRateLimitAccountWindow: cfg.LoginRateLimitAccountWindow,
+	})
 	authHandlers := authsvc.NewHandlers(authService)
 
 	coreRepo := coreapi.NewRepository(pool)
 	coreHandlers := coreapi.NewHandlers(coreRepo, authorizer)
 
-	server := httpserver.NewServer(authHandlers, tokens, authorizer, coreHandlers)
-	
+	server := httpserver.NewServer(authHandlers, tokens, authorizer, coreHandlers, rateLimiter, httpserver.RateLimitConfig{
+		LoginPerIP:       cfg.LoginRateLimitPerIP,
+		LoginIPWindow:    cfg.LoginRateLimitIPWindow,
+		RegisterPerIP:    cfg.RegisterRateLimitPerIP,
+		RegisterIPWindow: cfg.RegisterRateLimitIPWindow,
+	})
+
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           server.Handler(),

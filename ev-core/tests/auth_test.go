@@ -42,10 +42,10 @@ func TestRegister_InvalidEmail(t *testing.T) {
 	if resp.Status != 400 {
 		t.Fatalf("expected 400, got %d: %s", resp.Status, resp.Raw)
 	}
-	// authsvc.writeAuthError отдаёт err.Error() как есть для ErrInvalidEmail/ErrWeakPassword —
-	// это расходится с кодом "invalid_email" из docs/api.md, но так ведёт себя код сейчас.
-	if resp.Body["error"] != "invalid email format" {
-		t.Fatalf("expected error='invalid email format', got %s", resp.Raw)
+	// authsvc.writeAuthError отдаёт стабильный машиночитаемый код "invalid_email",
+	// а не сырой текст ошибки (согласовано с docs/api.md).
+	if resp.Body["error"] != "invalid_email" {
+		t.Fatalf("expected error='invalid_email', got %s", resp.Raw)
 	}
 }
 

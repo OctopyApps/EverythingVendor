@@ -20,10 +20,23 @@ type Config struct {
 	JWTPrivateKeyPath string
 	JWTPublicKeyPath  string
 
-	AccessTokenTTL time.Duration
+	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 
 	RBACCacheTTL time.Duration
+
+	// Rate limiting (см. internal/ratelimit). Fail mode настраивается отдельно
+	// от лимитов, т.к. это осознанный компромисс доступность/безопасность,
+	// который может понадобиться менять независимо (см. docs/security.md).
+	RateLimitFailMode string // "open" | "closed"
+
+	LoginRateLimitPerIP         int
+	LoginRateLimitIPWindow      time.Duration
+	LoginRateLimitPerAccount    int
+	LoginRateLimitAccountWindow time.Duration
+
+	RegisterRateLimitPerIP    int
+	RegisterRateLimitIPWindow time.Duration
 }
 
 // Load читает конфигурацию из os.Environ(). Возвращает ошибку, если
@@ -63,6 +76,47 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.RBACCacheTTL = time.Duration(cacheSeconds) * time.Second
+
+	cfg.RateLimitFailMode = getEnvDefault("RATE_LIMIT_FAIL_MODE", "open")
+	if cfg.RateLimitFailMode != "open" && cfg.RateLimitFailMode != "closed" {
+		return nil, fmt.Errorf("RATE_LIMIT_FAIL_MODE must be 'open' or 'closed', got %q", cfg.RateLimitFailMode)
+	}
+
+	loginRatePerIP, err := getEnvInt("LOGIN_RATE_LIMIT_PER_IP", 10)
+	if err != nil {
+		return nil, err
+	}
+	cfg.LoginRateLimitPerIP = loginRatePerIP
+
+	loginRateIPWindowMinutes, err := getEnvInt("LOGIN_RATE_LIMIT_IP_WINDOW_MINUTES", 5)
+	if err != nil {
+		return nil, err
+	}
+	cfg.LoginRateLimitIPWindow = time.Duration(loginRateIPWindowMinutes) * time.Minute
+
+	loginRatePerAccount, err := getEnvInt("LOGIN_RATE_LIMIT_PER_ACCOUNT", 5)
+	if err != nil {
+		return nil, err
+	}
+	cfg.LoginRateLimitPerAccount = loginRatePerAccount
+
+	loginRateAccountWindowMinutes, err := getEnvInt("LOGIN_RATE_LIMIT_ACCOUNT_WINDOW_MINUTES", 15)
+	if err != nil {
+		return nil, err
+	}
+	cfg.LoginRateLimitAccountWindow = time.Duration(loginRateAccountWindowMinutes) * time.Minute
+
+	registerRatePerIP, err := getEnvInt("REGISTER_RATE_LIMIT_PER_IP", 20)
+	if err != nil {
+		return nil, err
+	}
+	cfg.RegisterRateLimitPerIP = registerRatePerIP
+
+	registerRateIPWindowMinutes, err := getEnvInt("REGISTER_RATE_LIMIT_IP_WINDOW_MINUTES", 60)
+	if err != nil {
+		return nil, err
+	}
+	cfg.RegisterRateLimitIPWindow = time.Duration(registerRateIPWindowMinutes) * time.Minute
 
 	return cfg, nil
 }

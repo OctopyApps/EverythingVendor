@@ -25,9 +25,9 @@ import (
 //
 // Каждая проверка логируется в audit_log — и разрешённые, и отклонённые.
 type Authorizer struct {
-	pool   *pgxpool.Pool
-	cache  *PermissionCache
-	audit  *audit.Logger
+	pool  *pgxpool.Pool
+	cache *PermissionCache
+	audit *audit.Logger
 }
 
 func NewAuthorizer(pool *pgxpool.Pool, cache *PermissionCache, auditLogger *audit.Logger) *Authorizer {

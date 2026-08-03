@@ -6,6 +6,7 @@ import (
 
 	"platform-core/internal/authsvc"
 	"platform-core/internal/coreapi"
+	"platform-core/internal/ratelimit"
 	"platform-core/internal/rbac"
 	"platform-core/internal/security"
 )
@@ -14,20 +15,49 @@ type Server struct {
 	mux *http.ServeMux
 }
 
-func NewServer(authHandlers *authsvc.Handlers, tokens *security.TokenManager, authorizer *rbac.Authorizer, coreHandlers *coreapi.Handlers) *Server {
+// RateLimitConfig — лимиты по IP для публичных auth-эндпоинтов (см. RateLimitByIP
+// в middleware.go). Лимит по аккаунту для /auth/login настраивается отдельно,
+// внутри authsvc.ServiceConfig — здесь только IP-уровень.
+type RateLimitConfig struct {
+	LoginPerIP       int
+	LoginIPWindow    time.Duration
+	RegisterPerIP    int
+	RegisterIPWindow time.Duration
+}
+
+func NewServer(
+	authHandlers *authsvc.Handlers,
+	tokens *security.TokenManager,
+	authorizer *rbac.Authorizer,
+	coreHandlers *coreapi.Handlers,
+	limiter *ratelimit.Limiter,
+	rlCfg RateLimitConfig,
+) *Server {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeOK(w)
 	})
 
-	// Публичные маршруты аутентификации — без Authenticate middleware.
-	mux.HandleFunc("POST /auth/register", authHandlers.Register)
-	mux.HandleFunc("POST /auth/login", authHandlers.Login)
+	authenticated := Authenticate(tokens)
+
+	// Публичные маршруты аутентификации — без Authenticate middleware, но с rate limit
+	// по IP на /register и /login (защита от брутфорса; доп. лимит по аккаунту
+	// для /login реализован внутри authsvc.Service.Login, см. docs/security.md).
+	mux.Handle("POST /auth/register",
+		RateLimitByIP(limiter, "register", rlCfg.RegisterPerIP, rlCfg.RegisterIPWindow)(
+			http.HandlerFunc(authHandlers.Register)))
+
+	mux.Handle("POST /auth/login",
+		RateLimitByIP(limiter, "login", rlCfg.LoginPerIP, rlCfg.LoginIPWindow)(
+			http.HandlerFunc(authHandlers.Login)))
+
 	mux.HandleFunc("POST /auth/refresh", authHandlers.Refresh)
 	mux.HandleFunc("POST /auth/logout", authHandlers.Logout)
 
-	authenticated := Authenticate(tokens)
+	// Самообслуживание: отзыв всех своих refresh-токенов, требует только
+	// валидный access-токен, без отдельного права через RBAC.
+	mux.Handle("POST /auth/logout-all", authenticated(http.HandlerFunc(authHandlers.LogoutAll)))
 
 	mux.Handle("GET /api/core/users",
 		authenticated(RequirePermission(authorizer, "core", "user", "read", NoRecordID)(
@@ -52,6 +82,12 @@ func NewServer(authHandlers *authsvc.Handlers, tokens *security.TokenManager, au
 	mux.Handle("GET /api/core/roles",
 		authenticated(RequirePermission(authorizer, "core", "role", "read", NoRecordID)(
 			http.HandlerFunc(coreHandlers.ListRoles))))
+
+	// Админский принудительный логаут другого пользователя — то же право, что
+	// и управление его ролями (core.user:write).
+	mux.Handle("POST /api/core/users/{id}/revoke-sessions",
+		authenticated(RequirePermission(authorizer, "core", "user", "write", PathUUIDExtractor("id"))(
+			http.HandlerFunc(coreHandlers.RevokeSessions))))
 
 	return &Server{mux: mux}
 }

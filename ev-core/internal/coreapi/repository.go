@@ -168,3 +168,25 @@ func (r *Repository) RevokeRole(ctx context.Context, tenantID, userID, roleID uu
 	}
 	return nil
 }
+
+// RevokeAllSessions отзывает все активные refresh-токены пользователя —
+// админский принудительный логаут другого пользователя (см. Handlers.RevokeSessions).
+//
+// Сначала проверяем принадлежность пользователя тенанту через GetUser — это даёт
+// корректный 404 вместо тихого no-op на несуществующего/чужого пользователя
+// и защищает от IDOR — нельзя отозвать сессии пользователя чужого тенанта,
+// даже подобрав его user_id.
+func (r *Repository) RevokeAllSessions(ctx context.Context, tenantID, userID uuid.UUID) error {
+	if _, err := r.GetUser(ctx, tenantID, userID); err != nil {
+		return err
+	}
+
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE refresh_tokens
+		SET revoked_at = now()
+		WHERE user_id = $1 AND revoked_at IS NULL
+	`, userID); err != nil {
+		return fmt.Errorf("revoke all sessions: %w", err)
+	}
+	return nil
+}

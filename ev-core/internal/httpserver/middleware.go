@@ -1,12 +1,16 @@
 package httpserver
 
 import (
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
 	"platform-core/internal/httpctx"
+	"platform-core/internal/ratelimit"
 	"platform-core/internal/rbac"
 	"platform-core/internal/security"
 )
@@ -99,4 +103,40 @@ func writeError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(`{"error":"` + code + `"}`))
+}
+
+// RateLimitByIP ограничивает число запросов с одного IP в заданном окне.
+// Используется для защиты /auth/login и /auth/register от брутфорса.
+// При превышении лимита -> 429 с заголовком Retry-After (в секундах).
+//
+// Поведение при недоступности Redis определяется ratelimit.FailMode,
+// с которым создан limiter (см. cmd/core/main.go, RATE_LIMIT_FAIL_MODE) —
+// это осознанное отличие от RequirePermission, которое всегда fail closed.
+func RateLimitByIP(limiter *ratelimit.Limiter, bucket string, limit int, window time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			result := limiter.Allow(r.Context(), bucket+":"+clientIP(r), limit, window)
+			if !result.Allowed {
+				w.Header().Set("Retry-After", strconv.Itoa(int(result.RetryAfter.Seconds())))
+				writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// clientIP извлекает IP клиента из RemoteAddr.
+//
+// ВАЖНО: сервис пока не рассчитан на работу за реверс-прокси/балансировщиком.
+// Если он появится — здесь потребуется явный, безопасный разбор
+// X-Forwarded-For с проверкой доверенных прокси, а не бездумное чтение
+// заголовка: он полностью контролируется клиентом и позволяет обойти лимит
+// по IP простой подделкой значения.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
