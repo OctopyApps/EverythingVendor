@@ -33,7 +33,7 @@ internal/rbac/          — Authorizer, PermissionCache, модели прав
 internal/audit/         — запись в audit_log
 internal/authsvc/       — регистрация/логин/refresh/logout
 internal/httpctx/       — claims в context.Context (общий для httpserver и coreapi)
-internal/coreapi/       — CRUD-эндпоинты ядра: users, roles, назначение ролей, revoke-sessions
+internal/coreapi/       — CRUD-эндпоинты ядра: users, roles, permissions, resource_grants, revoke-sessions
 internal/ratelimit/     — Redis fixed-window rate limiter (для /auth/login и /auth/register)
 internal/httpserver/    — роутинг (net/http ServeMux), middleware (auth + RBAC + rate limit), security headers
 migrations/             — SQL-миграции (golang-migrate)
@@ -77,8 +77,10 @@ make run
 7. **JWT не хранит permissions.** Права проверяются на каждый запрос через
    `Authorizer`, а не читаются из токена — это даёт мгновенный отзыв доступа
    (в рамках TTL кэша), а не только после истечения токена.
-8. **Инвалидация RBAC-кэша обязательна** после любого изменения ролей
-   пользователя (`Authorizer.InvalidateUserCache`) — не полагаться только на TTL.
+8. **Инвалидация RBAC-кэша обязательна** после любого изменения доступа:
+   `Authorizer.InvalidateUserCache` при изменении ролей пользователя,
+   `Authorizer.InvalidateRoleCache` при изменении прав самой роли (затрагивает
+   всех её носителей) — не полагаться только на TTL.
 9. **Комментарии в коде — на русском**, идентификаторы — на английском
    (сложившийся стиль проекта, сохранять для консистентности).
 10. **Rate limiting — отдельный случай fail-поведения**: в отличие от RBAC (п. 3),
@@ -97,9 +99,13 @@ make run
 - ✅ Тесты: чёрно-ящичные HTTP-тесты на auth, RBAC и core API (`ev-core/tests/`).
 - ✅ Rate limiting на `/auth/login` (IP + аккаунт) и `/auth/register` (IP), fail-mode конфигурируем.
 - ✅ Отзыв всех refresh-токенов разом (самообслуживание + админский эндпоинт).
-- ⬜ Модуль CRM (Фаза 1) — не начат.
+- ✅ Управление правами ролей (создание/удаление ролей, назначение/отзыв permission,
+  каталог прав) и `resource_grants` через API.
+- ✅ Unit/integration-тесты на `Authorizer.evaluate` (`internal/rbac/authorizer_test.go`) —
+  полная таблица истинности + инвалидация кэша по пользователю и по роли.
+- ⬜ **Реестр модулей / Module SDK — следующий шаг**, см. architecture.md §3.2.3 и §5.
+- ⬜ Модуль CRM (Фаза 1) — не начат, ждёт реестр модулей.
 - ⬜ NATS event bus — поднят инфраструктурно, код публикации/подписки не написан.
-- ⬜ Unit-тесты на `Authorizer.evaluate` (таблица истинности всех веток) — сейчас есть только integration-тесты через HTTP.
 
 ## Известные сознательные упрощения MVP
 

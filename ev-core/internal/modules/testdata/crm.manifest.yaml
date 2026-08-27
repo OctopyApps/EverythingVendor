@@ -1,0 +1,54 @@
+# Пример манифеста декларативного модуля (без собственного сервиса) —
+# см. docs/architecture.md §5 и §5.1. Используется только для ручной
+# проверки ParseManifest/ValidateManifest на этом шаге; фактический
+# модуль CRM (Фаза 1) будет опираться на реальный манифест рядом со своим
+# кодом, не на этот тестовый файл.
+
+module: crm
+version: 1.0.0
+
+entities:
+  - name: deal
+    fields:
+      - name: title
+        type: string
+        required: true
+      - name: amount
+        type: float
+        required: true
+      - name: stage
+        type: string
+        required: true
+      - name: owner_id
+        type: uuid
+        required: true
+      - name: contact_id
+        type: uuid
+        ref: contact
+    permissions: [read, write, delete, export]
+
+  - name: contact
+    fields:
+      - name: name
+        type: string
+        required: true
+      - name: email
+        type: string
+      - name: phone
+        type: string
+      - name: company_id
+        type: uuid
+        ref: company
+    permissions: [read, write, delete]
+
+events:
+  publishes: [crm.deal_created, crm.deal_won, crm.deal_lost]
+  subscribes: [email.classified, archive.document_linked]
+
+ui:
+  menu_items: [Сделки, Контакты, Компании]
+
+api:
+  base_path: /api/crm
+  # service_url не задан — модуль полностью декларативный, весь CRUD
+  # генерирует Entity Engine ядра.
